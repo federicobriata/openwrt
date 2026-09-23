@@ -1,0 +1,82 @@
+From 00000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Gioacchino Mazzurco <gio@polymathes.cc>
+Date: Tue, 22 Sep 2026 13:39:00 +0000
+Subject: [PATCH] wifi: mac80211: Allow peer-BSSID Block Ack for APuP
+
+APuP creates stations from peer AP beacons without joining a common BSS.
+The peers use AP_VLAN 4-address interfaces and retain distinct BSSIDs.
+Their Block Ack action frames carry the transmitting AP's BSSID.
+
+Accept these frames only from an associated, authorized station bound to
+a 4-address AP_VLAN, addressed to us, with source and BSSID matching the
+peer. Validate the action and length before bypassing the foreign-BSSID
+and TDLS action filters. Subsequent RX checks remain in place. There is
+no explicit APuP station flag, so match the peer addressing pattern.
+
+Signed-off-by: Gioacchino Mazzurco <gio@polymathes.cc>
+---
+--- a/net/mac80211/rx.c
++++ b/net/mac80211/rx.c
+@@ -4511,3 +4511,51 @@
++/* APuP peers keep their own BSSID instead of associating to ours. */
++static bool ieee80211_accept_4addr_peer_ba(struct ieee80211_rx_data *rx)
++{
++	struct ieee80211_mgmt *mgmt = (void *)rx->skb->data;
++	struct sta_info *sta = rx->sta;
++	struct ieee80211_sub_if_data *vlan;
++	size_t min_len;
++
++	if (!ieee80211_is_action(mgmt->frame_control) ||
++	    rx->skb->len < IEEE80211_MIN_ACTION_SIZE(action_code) ||
++	    mgmt->u.action.category != WLAN_CATEGORY_BACK)
++		return false;
++
++	if (!sta || !test_sta_flag(sta, WLAN_STA_ASSOC) ||
++	    !test_sta_flag(sta, WLAN_STA_AUTHORIZED))
++		return false;
++
++	vlan = sta->sdata;
++	if (vlan->vif.type != NL80211_IFTYPE_AP_VLAN ||
++	    !vlan->wdev.use_4addr ||
++	    rcu_access_pointer(vlan->u.vlan.sta) != sta ||
++	    !ieee80211_is_our_addr(rx->sdata, mgmt->da, &rx->link_id) ||
++	    !ether_addr_equal(mgmt->sa, sta->sta.addr) ||
++	    !ether_addr_equal(mgmt->bssid, sta->sta.addr))
++		return false;
++
++	switch (mgmt->u.action.action_code) {
++	case WLAN_ACTION_ADDBA_REQ:
++		min_len = IEEE80211_MIN_ACTION_SIZE(addba_req);
++		break;
++	case WLAN_ACTION_ADDBA_RESP:
++		min_len = IEEE80211_MIN_ACTION_SIZE(addba_resp);
++		break;
++	case WLAN_ACTION_DELBA:
++		min_len = IEEE80211_MIN_ACTION_SIZE(delba);
++		break;
++	default:
++		return false;
++	}
++	if (rx->skb->len < min_len)
++		return false;
++
++	pr_info_ratelimited("mac80211: %s APuP BA peer-BSSID exception accepted peer=%pM action=%u SA=%pM DA=%pM BSSID=%pM\n",
++		vlan->name, sta->sta.addr, mgmt->u.action.action_code,
++		mgmt->sa, mgmt->da, mgmt->bssid);
++	return true;
++}
++
+ static bool ieee80211_accept_frame(struct ieee80211_rx_data *rx)
+ {
+ 	struct ieee80211_sub_if_data *sdata = rx->sdata;
+@@ -4598,4 +4646,10 @@ static bool ieee80211_accept_frame(struct ieee80211_rx_data *rx)
+ 		if (!is_broadcast_ether_addr(bssid) &&
+ 		    !ieee80211_is_our_addr(sdata, bssid, NULL)) {
++			/*
++			 * Return now: the later action-frame check would also reject a
++			 * peer BSSID that differs from our address.
++			 */
++			if (ieee80211_accept_4addr_peer_ba(rx))
++				return true;
+ 
+ 			/*
