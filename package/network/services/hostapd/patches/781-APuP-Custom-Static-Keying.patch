@@ -1,0 +1,49 @@
+Index: hostapd-2026.08.07~831364bf/src/ap/apup.c
+===================================================================
+--- hostapd-2026.08.07~831364bf.orig/src/ap/apup.c
++++ hostapd-2026.08.07~831364bf/src/ap/apup.c
+@@ -22,6 +22,7 @@
+ #include "ieee802_11.h"
+ #include "ap_drv_ops.h"
+ #include "sta_info.h"
++#include "common/wpa_common.h"
+ 
+ #ifdef UBUS_SUPPORT
+ #	include "ubus.h"
+@@ -79,8 +80,7 @@ void apup_process_beacon(struct hostapd_
+ 	sta_ret->flags |= WLAN_STA_AUTH;
+ 	wpa_auth_sm_event(sta_ret->wpa_sm, WPA_AUTH);
+ 
+-	/* TODO: Investigate if supporting WPA or other encryption method is
+-	 * possible */
++	/* We use WLAN_AUTH_OPEN at the MAC level but inject PTK below if WPA is enabled */
+ 	sta_ret->auth_alg = WLAN_AUTH_OPEN;
+ 	mlme_authenticate_indication(hapd, sta_ret);
+ 
+@@ -161,6 +161,26 @@ void apup_process_beacon(struct hostapd_
+ 	int mRet = hostapd_set_wds_sta(
+ 	            hapd, mIfname, mgmt->bssid, sta_ret->aid, 1);
+ 
++	if (hapd->conf->wpa && hapd->conf->ssid.wpa_psk) {
++		int cipher = wpa_pick_pairwise_cipher(hapd->conf->wpa_pairwise, 0);
++		u8 nonce[WPA_NONCE_LEN];
++		struct wpa_ptk ptk;
++
++		os_memset(nonce, 0, WPA_NONCE_LEN);
++		os_memset(&ptk, 0, sizeof(ptk));
++		
++		wpa_pmk_to_ptk(hapd->conf->ssid.wpa_psk->psk, PMK_LEN,
++		               "Pairwise key expansion",
++		               hapd->own_addr, mgmt->bssid,
++		               nonce, nonce, &ptk,
++		               hapd->conf->wpa_key_mgmt,
++		               cipher, NULL, 0, 0);
++		
++		hostapd_drv_set_key(hapd->conf->iface, hapd, wpa_cipher_to_alg(cipher),
++		                    mgmt->bssid, 0, 0, 1, NULL, 0, ptk.tk, ptk.tk_len, KEY_FLAG_PAIRWISE_RX_TX);
++		wpa_printf(MSG_INFO, "apup_process_beacon(...) Injected static PTK for APuP peer");
++	}
++
+ 	wpa_printf(MSG_INFO,
+ 	           "apup_process_beacon(...) Added APuP peer at %s with flags: %d,"
+ 	           " capabilities %d",
