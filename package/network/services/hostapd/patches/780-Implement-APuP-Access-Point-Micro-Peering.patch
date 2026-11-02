@@ -164,7 +164,7 @@ Hotfix-by: Sebastian Gottschall https://github.com/mirror/dd-wrt/commit/0c3001a6
  int hostapd_sta_add(struct hostapd_data *hapd,
 --- /dev/null
 +++ b/src/ap/apup.c
-@@ -0,0 +1,168 @@
+@@ -0,0 +1,182 @@
 +/*
 + * hostapd / APuP Access Point Micro Peering
 + *
@@ -219,10 +219,16 @@ Hotfix-by: Sebastian Gottschall https://github.com/mirror/dd-wrt/commit/0c3001a6
 +		return;
 +
 +	sta_ret = ap_sta_add(hapd, mgmt->bssid);
++	if (!sta_ret)
++	{
++		wpa_printf(MSG_INFO,
++		           "apup_process_beacon(...) Failed to add APuP peer");
++		return;
++	}
 +
 +	/* TODO: this has been added just to making compiler happy after breaking
-+	 * changes introduced in 11a607d121df512e010148bedcb4263a03329dc7 to support
-+	 * IEEE80211BE Multi Link Operation. Look at that commit with more time and
++	 * changes introduced in 11a607d12 and 7855b6d60 to support
++	 * IEEE80211BE Multi Link Operation. Look at these commits with more time and
 +	 * understand what could be a proper implementation in this context too
 +	 */
 +	const u8 *mld_link_addr = NULL;
@@ -255,7 +261,8 @@ Hotfix-by: Sebastian Gottschall https://github.com/mirror/dd-wrt/commit/0c3001a6
 +
 +	/* Whithout this flag copy_sta_[v]ht_capab will disable [V]HT
 +	 * capabilities even if available */
-+	if (elems->ht_capabilities || elems->vht_capabilities)
++	if (elems->ht_capabilities || elems->vht_capabilities ||
++	    elems->he_capabilities || elems->eht_capabilities)
 +		sta_ret->flags |= WLAN_STA_WMM;
 +
 +	copy_sta_ht_capab(hapd, sta_ret, elems->ht_capabilities);
@@ -281,6 +288,7 @@ Hotfix-by: Sebastian Gottschall https://github.com/mirror/dd-wrt/commit/0c3001a6
 +	if (hostapd_get_aid(hapd, sta_ret) < 0)
 +	{
 +		wpa_printf(MSG_INFO, "apup_process_beacon(...) No room for more AIDs");
++		ap_free_sta(hapd, sta_ret);
 +		return;
 +	}
 +
@@ -319,6 +327,12 @@ Hotfix-by: Sebastian Gottschall https://github.com/mirror/dd-wrt/commit/0c3001a6
 +	// last param 1 means add 0 means remove
 +	int mRet = hostapd_set_wds_sta(
 +	            hapd, mIfname, mgmt->bssid, sta_ret->aid, 1);
++
++	if (mRet == 0) {
++		sta_ret->flags |= WLAN_STA_WDS;
++		os_free(sta_ret->ifname_wds);
++		sta_ret->ifname_wds = os_strdup(mIfname);
++	}
 +
 +	wpa_printf(MSG_INFO,
 +	           "apup_process_beacon(...) Added APuP peer at %s with flags: %d,"
