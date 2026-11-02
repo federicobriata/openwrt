@@ -9,13 +9,14 @@ define Package/batman-apup
   SECTION:=net
   CATEGORY:=Network
   TITLE:=Add APuP peers to batman-adv
-  DEPENDS:=+kmod-batman-adv +batctl-default
+  DEPENDS:=+kmod-batman-adv +batctl-default +kmod-macvlan +kmod-dummy +ip-full +iw
   PKGARCH:=all
 endef
 
 define Package/batman-apup/description
  Service that watches the WDS interfaces hostapd creates for APuP peers
- and adds them to the bat0 batman-adv mesh interface.
+ and adds them to the bat0 batman-adv mesh interface through macvlan
+ interfaces with unique MAC addresses, after a dummy primary0 interface.
 endef
 
 define Build/Compile
