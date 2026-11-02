@@ -14,10 +14,15 @@ and TDLS action filters. Subsequent RX checks remain in place. There is
 no explicit APuP station flag, so match the peer addressing pattern.
 
 Signed-off-by: Gioacchino Mazzurco <gio@polymathes.cc>
+[federico@briata.org: adapt to backports 6.12, where IEEE80211_MIN_ACTION_SIZE
+ takes no argument and action_code is inside u.action.u]
 ---
 --- a/net/mac80211/rx.c
 +++ b/net/mac80211/rx.c
-@@ -4511,3 +4511,51 @@
+@@ -4440,6 +4440,54 @@ static inline int ieee80211_bssid_match(
+ 	       is_broadcast_ether_addr(raddr);
+ }
+ 
 +/* APuP peers keep their own BSSID instead of associating to ours. */
 +static bool ieee80211_accept_4addr_peer_ba(struct ieee80211_rx_data *rx)
 +{
@@ -27,7 +32,7 @@ Signed-off-by: Gioacchino Mazzurco <gio@polymathes.cc>
 +	size_t min_len;
 +
 +	if (!ieee80211_is_action(mgmt->frame_control) ||
-+	    rx->skb->len < IEEE80211_MIN_ACTION_SIZE(action_code) ||
++	    rx->skb->len < IEEE80211_MIN_ACTION_SIZE + 1 ||
 +	    mgmt->u.action.category != WLAN_CATEGORY_BACK)
 +		return false;
 +
@@ -44,15 +49,15 @@ Signed-off-by: Gioacchino Mazzurco <gio@polymathes.cc>
 +	    !ether_addr_equal(mgmt->bssid, sta->sta.addr))
 +		return false;
 +
-+	switch (mgmt->u.action.action_code) {
++	switch (mgmt->u.action.u.addba_req.action_code) {
 +	case WLAN_ACTION_ADDBA_REQ:
-+		min_len = IEEE80211_MIN_ACTION_SIZE(addba_req);
++		min_len = IEEE80211_MIN_ACTION_SIZE + sizeof(mgmt->u.action.u.addba_req);
 +		break;
 +	case WLAN_ACTION_ADDBA_RESP:
-+		min_len = IEEE80211_MIN_ACTION_SIZE(addba_resp);
++		min_len = IEEE80211_MIN_ACTION_SIZE + sizeof(mgmt->u.action.u.addba_resp);
 +		break;
 +	case WLAN_ACTION_DELBA:
-+		min_len = IEEE80211_MIN_ACTION_SIZE(delba);
++		min_len = IEEE80211_MIN_ACTION_SIZE + sizeof(mgmt->u.action.u.delba);
 +		break;
 +	default:
 +		return false;
@@ -61,7 +66,7 @@ Signed-off-by: Gioacchino Mazzurco <gio@polymathes.cc>
 +		return false;
 +
 +	pr_info_ratelimited("mac80211: %s APuP BA peer-BSSID exception accepted peer=%pM action=%u SA=%pM DA=%pM BSSID=%pM\n",
-+		vlan->name, sta->sta.addr, mgmt->u.action.action_code,
++		vlan->name, sta->sta.addr, mgmt->u.action.u.addba_req.action_code,
 +		mgmt->sa, mgmt->da, mgmt->bssid);
 +	return true;
 +}
@@ -69,14 +74,16 @@ Signed-off-by: Gioacchino Mazzurco <gio@polymathes.cc>
  static bool ieee80211_accept_frame(struct ieee80211_rx_data *rx)
  {
  	struct ieee80211_sub_if_data *sdata = rx->sdata;
-@@ -4598,4 +4646,10 @@ static bool ieee80211_accept_frame(struct ieee80211_rx_data *rx)
+@@ -4523,6 +4571,12 @@ static bool ieee80211_accept_frame(struc
  		if (!is_broadcast_ether_addr(bssid) &&
  		    !ieee80211_is_our_addr(sdata, bssid, NULL)) {
-+			/*
+ 			/*
 +			 * Return now: the later action-frame check would also reject a
 +			 * peer BSSID that differs from our address.
 +			 */
 +			if (ieee80211_accept_4addr_peer_ba(rx))
 +				return true;
- 
- 			/*
++			/*
+ 			 * Accept public action frames even when the
+ 			 * BSSID doesn't match, this is used for P2P
+ 			 * and location updates. Note that mac80211
