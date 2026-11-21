@@ -1,0 +1,5 @@
+#!/bin/sh
+# The watcher of this variant only works on a bat0 created with BATMAN_V
+uci -q get network.bat0 >/dev/null || exit 0
+uci set network.bat0.routing_algo='BATMAN_V'
+uci commit network
