@@ -9,7 +9,7 @@ MESH_IF=bat0
 # WDS interfaces share the AP MAC address, but batman-adv needs a unique one on every hard interface
 PRIMARY_IF=primary0
 
-logger -t batman-watchdog "Watcher started: waiting for *.staX interfaces..."
+logger -t apup-watchdog "Watcher started: waiting for *.staX interfaces..."
 while true; do
     # Added first so it stays the primary: the originator address no longer depends on which peer shows up first
     if ! batctl meshif "$MESH_IF" if | awk -v iface="$PRIMARY_IF:" '$1 == iface {found=1} END {exit !found}'; then
@@ -42,7 +42,7 @@ while true; do
         # 02 (locally administered) + our MAC bytes 4-6 + peer MAC bytes 5-6: unique per peer, stable across reboots
         MV_MAC="02:$(printf '%s\n' "$PHY_MAC" | cut -d: -f4-6):$(printf '%s\n' "$PEER_MAC" | cut -d: -f5-6)"
         if ! ip link show dev "$MV_IF" >/dev/null 2>&1; then
-            logger -t batman-watchdog "Creating $MV_IF on $sta_if with MAC $MV_MAC"
+            logger -t apup-watchdog "Creating $MV_IF on $sta_if with MAC $MV_MAC"
             ip link add link "$sta_if" name "$MV_IF" address "$MV_MAC" type macvlan mode bridge || continue
         fi
         ip link set dev "$MV_IF" up || continue
